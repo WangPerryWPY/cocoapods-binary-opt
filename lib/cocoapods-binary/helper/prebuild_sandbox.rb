@@ -27,6 +27,11 @@ module Pod
             self.generate_framework_path + name
         end
 
+        def plist_path_for_target_name(name)
+          framework_path = framework_folder_path_for_target_name(name)
+          "#{framework_path}/#{name}.framework/Info.plist"
+        end
+
         
         def exsited_framework_target_names
             exsited_framework_name_pairs.map {|pair| pair[0]}.uniq

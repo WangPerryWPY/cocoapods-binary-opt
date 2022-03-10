@@ -4,22 +4,37 @@ module Pod
         def self.keyword
             :binary
         end
+        def self.use_framework
+          :use_framework
+        end
     end
 
     class Podfile
       class TargetDefinition
+        @@root_pod_building_options = Array.new
+
+        def self.root_pod_building_options
+          @@root_pod_building_options
+        end
 
         ## --- option for setting using prebuild framework ---
         def parse_prebuild_framework(name, requirements)
+            building_options = @@root_pod_building_options
             should_prebuild = Pod::Podfile::DSL.prebuild_all
-
             options = requirements.last
-            if options.is_a?(Hash) && options[Pod::Prebuild.keyword] != nil 
+            if options.is_a?(Hash) && options[Pod::Prebuild.keyword] != nil
                 should_prebuild = options.delete(Pod::Prebuild.keyword)
                 requirements.pop if options.empty?
             end
-    
+
             pod_name = Specification.root_name(name)
+
+            if options.is_a?(Hash) and options[Pod::Prebuild.use_framework] != nil
+              use_framework = options.delete(Pod::Prebuild.use_framework)
+              building_options.push(pod_name) if use_framework
+              requirements.pop if options.empty?
+            end
+    
             set_prebuild_for_pod(pod_name, should_prebuild)
         end
         
@@ -121,6 +136,24 @@ module Pod
             warnings += multi_targets_pods.map{|name, targets| "         #{name}: #{targets.map{|t|t.platform.name}}"}.join("\n")
             raise Informative, warnings
         end
+        
+
+        old_method = instance_method(:analyze)
+        define_method(:analyze) do |analyzer = create_analyzer|
+          old_method.bind(self).(analyzer)
+          root_pod_building_options = Pod::Podfile::TargetDefinition.root_pod_building_options.clone
+          Pod::UI::puts(root_pod_building_options)
+          pod_targets.each do |target|
+            if not root_pod_building_options.include?("#{target}")
+            # Override the target's build time for user provided one
+              is_version_1_9_x = Pod.const_defined?(:BuildType) # CP v1.9.x
+              # Assign BuildType to proper module definition dependent on CP version.
+              # BuildType = is_version_1_9_x ? Pod::BuildType : Pod::Target::BuildType
+              target.instance_variable_set(:@build_type, Pod::Target::BuildType.static_library)
+            end
+          end
+        end
+
 
     end
 end

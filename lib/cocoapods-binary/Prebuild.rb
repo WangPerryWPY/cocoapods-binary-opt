@@ -1,7 +1,7 @@
 require_relative 'rome/build_framework'
 require_relative 'helper/passer'
 require_relative 'helper/target_checker'
-
+require 'cfpropertylist'
 
 # patch prebuild ability
 module Pod
@@ -19,21 +19,33 @@ module Pod
             @local_manifest
         end
 
-        # @return [Analyzer::SpecsState]
+        public
+
         def prebuild_pods_changes
-            return nil if local_manifest.nil?
-            if @prebuild_pods_changes.nil?
-                changes = local_manifest.detect_changes_with_podfile(podfile)
-                @prebuild_pods_changes = Analyzer::SpecsState.new(changes)
-                # save the chagnes info for later stage
-                Pod::Prebuild::Passer.prebuild_pods_changes = @prebuild_pods_changes 
-            end
-            @prebuild_pods_changes
+          changes = lockfile.detect_changes_with_podfile(podfile)
+          unchanged_pod_names = changes[:unchanged]
+          changed_pod_names = changes[:changed]
+          unchanged_pod_names.reverse_each do |name|
+            Pod::UI.puts(name)
+              mainfest_pod_version = lockfile.version(name).to_s
+              already_prebuild_version = prebuilded_framework_version(name) || "未找到"
+              if mainfest_pod_version != already_prebuild_version
+                  Pod::UI.puts("- #{name} 已编译版本 #{already_prebuild_version}, manifest中的版本: #{mainfest_pod_version}")
+                  changed_pod_names = changed_pod_names.push(name)
+                  unchanged_pod_names.delete(name)
+              end
+          end
+
+          changes[:changed] = changed_pod_names
+          changes[:unchanged] = unchanged_pod_names
+          Pod::UI.puts("需要重编译的framework : #{changed_pod_names.to_s}") if config.verbose
+          @prebuild_pods_changes = Analyzer::SpecsState.new(changes)
+          # save the chagnes info for later stage
+          Pod::Prebuild::Passer.prebuild_pods_changes = @prebuild_pods_changes 
+          @prebuild_pods_changes
+
         end
-
         
-        public 
-
         # check if need to prebuild
         def have_exact_prebuild_cache?
             # check if need build frameworks
@@ -54,6 +66,17 @@ module Pod
             return needed.empty?
         end
         
+        # 当前已编译的framework的版本
+        def prebuilded_framework_version(name)
+          path = self.sandbox.plist_path_for_target_name(name)
+          framework_version = ""
+          if Pathname.new(path).exist?
+              plist_file = CFPropertyList::List.new(:file => path) 
+              data = CFPropertyList.native_types(plist_file.value)
+              framework_version = data["CFBundleShortVersionString"]
+          end
+          framework_version
+        end
         
         # The install method when have completed cache
         def install_when_cache_hit!
@@ -122,6 +145,7 @@ module Pod
                 end
 
                 output_path = sandbox.framework_folder_path_for_target_name(target.name)
+                output_path.rmtree if output_path.exist?
                 output_path.mkpath unless output_path.exist?
                 Pod::Prebuild.build(sandbox_path, target, output_path, bitcode_enabled,  Podfile::DSL.custom_build_options,  Podfile::DSL.custom_build_options_simulator)
 
